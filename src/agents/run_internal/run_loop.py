@@ -665,6 +665,19 @@ async def start_streaming(
                         )
                         break
 
+                    # The resumed streaming turn reached a non-interrupted outcome,
+                    # so fire on_turn_end exactly once for it before handling next step.
+                    await asyncio.gather(
+                        hooks.on_turn_end(context_wrapper, current_agent, current_turn),
+                        (
+                            current_agent.hooks.on_turn_end(
+                                context_wrapper, current_agent, current_turn
+                            )
+                            if current_agent.hooks
+                            else _coro.noop_coroutine()
+                        ),
+                    )
+
                     if isinstance(turn_result.next_step, NextStepHandoff):
                         current_agent = turn_result.next_step.new_agent
                         if run_state is not None:
@@ -932,16 +945,17 @@ async def start_streaming(
                     tool_use_tracker
                 )
 
-                await asyncio.gather(
-                    hooks.on_turn_end(context_wrapper, current_agent, current_turn),
-                    (
-                        current_agent.hooks.on_turn_end(
-                            context_wrapper, current_agent, current_turn
-                        )
-                        if current_agent.hooks
-                        else _coro.noop_coroutine()
-                    ),
-                )
+                if not isinstance(turn_result.next_step, NextStepInterruption):
+                    await asyncio.gather(
+                        hooks.on_turn_end(context_wrapper, current_agent, current_turn),
+                        (
+                            current_agent.hooks.on_turn_end(
+                                context_wrapper, current_agent, current_turn
+                            )
+                            if current_agent.hooks
+                            else _coro.noop_coroutine()
+                        ),
+                    )
 
                 streamed_result.raw_responses = streamed_result.raw_responses + [
                     turn_result.model_response

@@ -112,10 +112,9 @@ class RunHooksBase(Generic[TContext, TAgent]):
     ) -> Union[TurnControl, None]:
         """Called at the start of each agent turn, before the LLM is invoked.
 
-        Returning ``"stop"`` (or raising :class:`StopAgentRun`) will halt the run
-        gracefully — the model is **not** called for this turn and
-        :meth:`on_turn_end` is **not** fired.  Returning ``None`` or ``"continue"``
-        proceeds normally.
+        Returning ``"stop"`` halts the run gracefully: the model is **not** called
+        for this turn and :meth:`on_turn_end` is **not** fired. Returning ``None``
+        or ``"continue"`` proceeds normally.
 
         Args:
             context: The run context wrapper.
@@ -135,6 +134,10 @@ class RunHooksBase(Generic[TContext, TAgent]):
         turn_number: int,
     ) -> None:
         """Called at the end of each agent turn, after all tool calls for that turn complete.
+
+        When a turn is interrupted (for example, by a tool approval requirement),
+        :meth:`on_turn_end` is **not** fired for that turn. It will fire once the
+        turn is resumed and reaches a non-interrupted outcome.
 
         Args:
             context: The run context wrapper.
@@ -240,6 +243,10 @@ class AgentHooksBase(Generic[TContext, TAgent]):
         turn_number: int,
     ) -> None:
         """Called at the end of each agent turn, after all tool calls for that turn complete.
+
+        When a turn is interrupted (for example, by a tool approval requirement),
+        :meth:`on_turn_end` is **not** fired for that turn. It will fire once the
+        turn is resumed and reaches a non-interrupted outcome.
 
         Args:
             context: The run context wrapper.

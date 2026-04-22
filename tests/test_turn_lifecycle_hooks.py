@@ -338,3 +338,110 @@ async def test_stop_on_first_turn_raises_max_turns() -> None:
 
     with pytest.raises(MaxTurnsExceeded, match="halted by on_turn_start hook"):
         await Runner.run(agent, input="hi", hooks=hooks)
+
+
+# ---------------------------------------------------------------------------
+# Interrupt + resume: on_turn_end fires once per turn, only on completion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_turn_end_skipped_on_interrupt_and_fired_once_after_resume() -> None:
+    """When a turn is interrupted, on_turn_end does not fire for that turn.
+
+    After the run is resumed and the same turn reaches a non-interrupted
+    outcome, on_turn_end should fire exactly once (and only once) for that
+    turn. This guards against firing on_turn_end prematurely on the
+    interrupted attempt and against missing it entirely on the resumed path.
+    """
+    import json
+
+    from agents.tool import function_tool
+
+    @function_tool(needs_approval=True)
+    async def gated_tool(text: str) -> str:
+        return f"echoed:{text}"
+
+    model = FakeModel()
+    agent = Agent(name="A", model=model, tools=[gated_tool])
+
+    # Turn 1 produces a tool call that requires approval.
+    # Turn 2 (after approval) produces the final text output.
+    turn_outputs = [
+        [get_function_tool_call("gated_tool", json.dumps({"text": "hi"}), call_id="c1")],
+        [get_text_message("done")],
+    ]
+
+    run_hooks = TurnTrackingRunHooks()
+    agent_hooks = TurnTrackingAgentHooks()
+    agent.hooks = agent_hooks
+
+    # First run: interrupt on the gated tool.
+    model.add_multiple_turn_outputs(turn_outputs)
+    first = await Runner.run(agent, input="hi", hooks=run_hooks)
+    assert first.interruptions, "expected an approval interruption on the first run"
+
+    # The interrupted turn must NOT have fired on_turn_end yet.
+    assert run_hooks.turn_starts == [1]
+    assert run_hooks.turn_ends == []
+    assert agent_hooks.turn_starts == [1]
+    assert agent_hooks.turn_ends == []
+
+    # Approve and resume; the resumed turn 1 completes, and turn 2 runs.
+    state = first.to_state()
+    state.approve(first.interruptions[0], always_approve=True)
+    resumed = await Runner.run(agent, input=state, hooks=run_hooks)
+
+    assert resumed.final_output == "done"
+    # on_turn_end fires exactly once per completed turn, in order.
+    assert run_hooks.turn_ends == [1, 2], (
+        f"on_turn_end should fire once for each completed turn; got {run_hooks.turn_ends}"
+    )
+    assert agent_hooks.turn_ends == [1, 2], (
+        f"agent on_turn_end should also fire once per turn; got {agent_hooks.turn_ends}"
+    )
+    # Sanity: each turn_start has a matching turn_end.
+    assert run_hooks.turn_starts == [1, 2]
+    assert agent_hooks.turn_starts == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_on_turn_end_skipped_on_interrupt_and_fired_once_after_resume_streaming() -> None:
+    """Streaming variant: on_turn_end timing must match the non-streamed runner."""
+    import json
+
+    from agents.tool import function_tool
+
+    from .utils.hitl import consume_stream
+
+    @function_tool(needs_approval=True)
+    async def gated_tool(text: str) -> str:
+        return f"echoed:{text}"
+
+    model = FakeModel()
+    agent = Agent(name="A", model=model, tools=[gated_tool])
+
+    turn_outputs = [
+        [get_function_tool_call("gated_tool", json.dumps({"text": "hi"}), call_id="c1")],
+        [get_text_message("done")],
+    ]
+    model.add_multiple_turn_outputs(turn_outputs)
+
+    run_hooks = TurnTrackingRunHooks()
+    streamed = Runner.run_streamed(agent, input="hi", hooks=run_hooks)
+    await consume_stream(streamed)
+
+    assert streamed.interruptions, "expected an approval interruption on streamed run"
+    assert run_hooks.turn_ends == [], (
+        "interrupted streaming turn must not fire on_turn_end before resume"
+    )
+
+    state = streamed.to_state()
+    state.approve(streamed.interruptions[0], always_approve=True)
+    resumed = Runner.run_streamed(agent, input=state, hooks=run_hooks)
+    await consume_stream(resumed)
+
+    assert resumed.final_output == "done"
+    assert run_hooks.turn_ends == [1, 2], (
+        f"streaming on_turn_end should fire once per completed turn; got {run_hooks.turn_ends}"
+    )

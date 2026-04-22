@@ -756,6 +756,21 @@ class AgentRunner:
                                     run_state=run_state,
                                 )
 
+                            # The resumed turn reached a non-interrupted outcome, so fire
+                            # on_turn_end exactly once for it before handling the next step.
+                            await asyncio.gather(
+                                hooks.on_turn_end(
+                                    context_wrapper, current_agent, current_turn
+                                ),
+                                (
+                                    current_agent.hooks.on_turn_end(
+                                        context_wrapper, current_agent, current_turn
+                                    )
+                                    if current_agent.hooks
+                                    else _coro.noop_coroutine()
+                                ),
+                            )
+
                             if isinstance(turn_result.next_step, NextStepRunAgain):
                                 continue
 
@@ -1112,16 +1127,17 @@ class AgentRunner:
                     last_saved_input_snapshot_for_rewind = None
                     should_run_agent_start_hooks = False
 
-                    await asyncio.gather(
-                        hooks.on_turn_end(context_wrapper, current_agent, current_turn),
-                        (
-                            current_agent.hooks.on_turn_end(
-                                context_wrapper, current_agent, current_turn
-                            )
-                            if current_agent.hooks
-                            else _coro.noop_coroutine()
-                        ),
-                    )
+                    if not isinstance(turn_result.next_step, NextStepInterruption):
+                        await asyncio.gather(
+                            hooks.on_turn_end(context_wrapper, current_agent, current_turn),
+                            (
+                                current_agent.hooks.on_turn_end(
+                                    context_wrapper, current_agent, current_turn
+                                )
+                                if current_agent.hooks
+                                else _coro.noop_coroutine()
+                            ),
+                        )
 
                     model_responses.append(turn_result.model_response)
                     original_input = turn_result.original_input
