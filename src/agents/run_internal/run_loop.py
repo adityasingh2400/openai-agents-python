@@ -665,6 +665,19 @@ async def start_streaming(
                         )
                         break
 
+                    # The resumed streaming turn reached a non-interrupted outcome,
+                    # so fire on_turn_end exactly once for it before handling next step.
+                    await asyncio.gather(
+                        hooks.on_turn_end(context_wrapper, current_agent, current_turn),
+                        (
+                            current_agent.hooks.on_turn_end(
+                                context_wrapper, current_agent, current_turn
+                            )
+                            if current_agent.hooks
+                            else _coro.noop_coroutine()
+                        ),
+                    )
+
                     if isinstance(turn_result.next_step, NextStepHandoff):
                         current_agent = turn_result.next_step.new_agent
                         if run_state is not None:
@@ -820,6 +833,29 @@ async def start_streaming(
                 streamed_result._event_queue.put_nowait(QueueCompleteSentinel())
                 break
 
+            run_hook_control, agent_hook_control = await asyncio.gather(
+                hooks.on_turn_start(context_wrapper, current_agent, current_turn),
+                (
+                    current_agent.hooks.on_turn_start(
+                        context_wrapper, current_agent, current_turn
+                    )
+                    if current_agent.hooks
+                    else _coro.noop_coroutine()
+                ),
+            )
+            if run_hook_control == "stop" or agent_hook_control == "stop":
+                logger.debug(
+                    "Turn %s: on_turn_start hook requested stop; halting run.",
+                    current_turn,
+                )
+                streamed_result._max_turns_handled = True
+                streamed_result.current_turn = current_turn
+                if run_state is not None:
+                    run_state._current_turn = current_turn
+                    run_state._current_step = None
+                streamed_result._event_queue.put_nowait(QueueCompleteSentinel())
+                break
+
             if current_turn == 1:
                 all_input_guardrails = starting_agent.input_guardrails + (
                     run_config.input_guardrails or []
@@ -908,6 +944,18 @@ async def start_streaming(
                 streamed_result._tool_use_tracker_snapshot = serialize_tool_use_tracker(
                     tool_use_tracker
                 )
+
+                if not isinstance(turn_result.next_step, NextStepInterruption):
+                    await asyncio.gather(
+                        hooks.on_turn_end(context_wrapper, current_agent, current_turn),
+                        (
+                            current_agent.hooks.on_turn_end(
+                                context_wrapper, current_agent, current_turn
+                            )
+                            if current_agent.hooks
+                            else _coro.noop_coroutine()
+                        ),
+                    )
 
                 streamed_result.raw_responses = streamed_result.raw_responses + [
                     turn_result.model_response

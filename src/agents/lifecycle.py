@@ -1,4 +1,6 @@
-from typing import Any, Generic, Optional
+from __future__ import annotations
+
+from typing import Any, Generic, Literal, Optional, Union
 
 from typing_extensions import TypeVar
 
@@ -9,10 +11,26 @@ from .tool import Tool
 
 TAgent = TypeVar("TAgent", bound=AgentBase, default=AgentBase)
 
+TurnControl = Literal["continue", "stop"]
+"""Return value for :meth:`RunHooksBase.on_turn_start` / :meth:`AgentHooksBase.on_turn_start`.
+
+* ``"continue"`` (default / ``None``) – proceed with the turn as normal.
+* ``"stop"`` – abort the run gracefully after this hook returns, exactly as if
+  ``max_turns`` had been reached.  The model is **not** called for this turn and
+  :meth:`on_turn_end` is **not** fired.
+"""
+
 
 class RunHooksBase(Generic[TContext, TAgent]):
     """A class that receives callbacks on various lifecycle events in an agent run. Subclass and
     override the methods you need.
+
+    Turn-lifecycle hooks
+    --------------------
+    :meth:`on_turn_start` and :meth:`on_turn_end` fire once per iteration of the
+    agent loop.  :meth:`on_turn_start` may return ``"stop"`` to halt the run
+    gracefully before the LLM is called for that turn (useful for implementing
+    custom turn-budget logic, external kill-switches, etc.).
     """
 
     async def on_llm_start(
@@ -86,12 +104,60 @@ class RunHooksBase(Generic[TContext, TAgent]):
         """Called immediately after a local tool is invoked."""
         pass
 
+    async def on_turn_start(
+        self,
+        context: RunContextWrapper[TContext],
+        agent: TAgent,
+        turn_number: int,
+    ) -> Union[TurnControl, None]:
+        """Called at the start of each agent turn, before the LLM is invoked.
+
+        Returning ``"stop"`` halts the run gracefully: the model is **not** called
+        for this turn and :meth:`on_turn_end` is **not** fired. Returning ``None``
+        or ``"continue"`` proceeds normally.
+
+        Args:
+            context: The run context wrapper.
+            agent: The current agent.
+            turn_number: The 1-indexed turn number (increments each time through the
+                agent loop).
+
+        Returns:
+            ``None`` / ``"continue"`` to proceed, or ``"stop"`` to halt the run.
+        """
+        return None
+
+    async def on_turn_end(
+        self,
+        context: RunContextWrapper[TContext],
+        agent: TAgent,
+        turn_number: int,
+    ) -> None:
+        """Called at the end of each agent turn, after all tool calls for that turn complete.
+
+        When a turn is interrupted (for example, by a tool approval requirement),
+        :meth:`on_turn_end` is **not** fired for that turn. It will fire once the
+        turn is resumed and reaches a non-interrupted outcome.
+
+        Args:
+            context: The run context wrapper.
+            agent: The current agent.
+            turn_number: The 1-indexed turn number.
+        """
+        pass
+
 
 class AgentHooksBase(Generic[TContext, TAgent]):
     """A class that receives callbacks on various lifecycle events for a specific agent. You can
     set this on `agent.hooks` to receive events for that specific agent.
 
     Subclass and override the methods you need.
+
+    Turn-lifecycle hooks
+    --------------------
+    :meth:`on_turn_start` and :meth:`on_turn_end` fire once per iteration of the
+    agent loop.  :meth:`on_turn_start` may return ``"stop"`` to halt the run
+    gracefully before the LLM is called for that turn.
     """
 
     async def on_start(self, context: AgentHookContext[TContext], agent: TAgent) -> None:
@@ -146,6 +212,47 @@ class AgentHooksBase(Generic[TContext, TAgent]):
         result: str,
     ) -> None:
         """Called immediately after a local tool is invoked."""
+        pass
+
+    async def on_turn_start(
+        self,
+        context: RunContextWrapper[TContext],
+        agent: TAgent,
+        turn_number: int,
+    ) -> Union[TurnControl, None]:
+        """Called at the start of each agent turn, before the LLM is invoked.
+
+        Returning ``"stop"`` halts the run gracefully before the model is called.
+        Returning ``None`` or ``"continue"`` proceeds normally.
+
+        Args:
+            context: The run context wrapper.
+            agent: The current agent.
+            turn_number: The 1-indexed turn number (increments each time through the
+                agent loop).
+
+        Returns:
+            ``None`` / ``"continue"`` to proceed, or ``"stop"`` to halt the run.
+        """
+        return None
+
+    async def on_turn_end(
+        self,
+        context: RunContextWrapper[TContext],
+        agent: TAgent,
+        turn_number: int,
+    ) -> None:
+        """Called at the end of each agent turn, after all tool calls for that turn complete.
+
+        When a turn is interrupted (for example, by a tool approval requirement),
+        :meth:`on_turn_end` is **not** fired for that turn. It will fire once the
+        turn is resumed and reaches a non-interrupted outcome.
+
+        Args:
+            context: The run context wrapper.
+            agent: The current agent.
+            turn_number: The 1-indexed turn number.
+        """
         pass
 
     async def on_llm_start(
