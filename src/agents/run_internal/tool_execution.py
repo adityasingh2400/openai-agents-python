@@ -147,6 +147,7 @@ __all__ = [
 ]
 
 REDACTED_TOOL_ERROR_MESSAGE = "Tool execution failed. Error details are redacted."
+TOOL_AUTHORIZATION_DENIED_MESSAGE = "Tool call denied: authorization hook returned False."
 TToolSpanResult = TypeVar("TToolSpanResult")
 _FUNCTION_TOOL_CANCELLED_DRAIN_SECONDS = 0.1
 _FUNCTION_TOOL_POST_INVOKE_WAIT_SECONDS = 0.1
@@ -1590,6 +1591,19 @@ class _FunctionToolBatchExecutor:
         )
         if rejected_message is not None:
             return rejected_message
+
+        # Authorization check: run-level hook first, then agent-level hook.
+        # If either denies the call, skip execution and return the denial string.
+        run_authorized = await self.hooks.on_tool_authorize(
+            tool_context, self.agent, func_tool
+        )
+        agent_authorized = (
+            await agent_hooks.on_tool_authorize(tool_context, self.agent, func_tool)
+            if agent_hooks
+            else True
+        )
+        if not run_authorized or not agent_authorized:
+            return TOOL_AUTHORIZATION_DENIED_MESSAGE
 
         await asyncio.gather(
             self.hooks.on_tool_start(tool_context, self.agent, func_tool),
