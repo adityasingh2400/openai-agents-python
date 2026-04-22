@@ -9,13 +9,15 @@ import pytest
 from agents import Agent, Runner
 from agents.lifecycle import AgentHooks, RunHooks
 from agents.run_context import RunContextWrapper, TContext
+from agents.run_internal.tool_execution import TOOL_AUTHORIZATION_DENIED_MESSAGE
 from agents.tool import FunctionTool, Tool
 
 from .fake_model import FakeModel
 from .test_responses import get_function_tool, get_function_tool_call, get_text_message
 
 
-DENIAL_MSG = "Tool call denied: authorization hook returned False."
+# Reference the production constant so the test can never drift from the actual message.
+DENIAL_MSG = TOOL_AUTHORIZATION_DENIED_MESSAGE
 
 
 class AllowRunHooks(RunHooks):
