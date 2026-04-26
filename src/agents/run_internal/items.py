@@ -18,8 +18,11 @@ from ..models.fake_id import FAKE_RESPONSES_ID
 from ..tool import DEFAULT_APPROVAL_REJECTION_MESSAGE
 
 REJECTION_MESSAGE = DEFAULT_APPROVAL_REJECTION_MESSAGE
+TOOL_CALL_SESSION_DESCRIPTION_KEY = "_agents_tool_description"
+TOOL_CALL_SESSION_TITLE_KEY = "_agents_tool_title"
 _TOOL_CALL_TO_OUTPUT_TYPE: dict[str, str] = {
     "function_call": "function_call_output",
+    "custom_tool_call": "custom_tool_call_output",
     "shell_call": "shell_call_output",
     "apply_patch_call": "apply_patch_call_output",
     "computer_call": "computer_call_output",
@@ -30,6 +33,8 @@ _TOOL_CALL_TO_OUTPUT_TYPE: dict[str, str] = {
 __all__ = [
     "ReasoningItemIdPolicy",
     "REJECTION_MESSAGE",
+    "TOOL_CALL_SESSION_DESCRIPTION_KEY",
+    "TOOL_CALL_SESSION_TITLE_KEY",
     "copy_input_items",
     "drop_orphan_function_calls",
     "ensure_input_item_format",
@@ -41,6 +46,7 @@ __all__ = [
     "fingerprint_input_item",
     "deduplicate_input_items",
     "deduplicate_input_items_preferring_latest",
+    "strip_internal_input_item_metadata",
     "function_rejection_item",
     "shell_rejection_item",
     "apply_patch_rejection_item",
@@ -148,8 +154,8 @@ def normalize_input_items_for_api(items: list[TResponseInputItem]) -> list[TResp
             normalized.append(item)
             continue
 
-        normalized_item = dict(coerced)
-        normalized.append(cast(TResponseInputItem, normalized_item))
+        normalized_item = strip_internal_input_item_metadata(cast(TResponseInputItem, coerced))
+        normalized.append(normalized_item)
     return normalized
 
 
@@ -188,12 +194,25 @@ def fingerprint_input_item(item: Any, *, ignore_ids_for_matching: bool = False) 
             payload = _model_dump_without_warnings(item)
             if payload is None:
                 return None
+            if isinstance(payload, dict):
+                payload = cast(
+                    dict[str, Any],
+                    strip_internal_input_item_metadata(cast(TResponseInputItem, payload)),
+                )
         elif isinstance(item, dict):
-            payload = dict(item)
+            payload = cast(
+                dict[str, Any],
+                strip_internal_input_item_metadata(cast(TResponseInputItem, item)),
+            )
             if ignore_ids_for_matching:
                 payload.pop("id", None)
         else:
             payload = ensure_input_item_format(item)
+            if isinstance(payload, dict):
+                payload = cast(
+                    dict[str, Any],
+                    strip_internal_input_item_metadata(cast(TResponseInputItem, payload)),
+                )
             if ignore_ids_for_matching and isinstance(payload, dict):
                 payload.pop("id", None)
 
@@ -229,6 +248,17 @@ def _dedupe_key(item: TResponseInputItem) -> str | None:
         return f"approval_request_id:{item_type}:{approval_request_id}"
 
     return None
+
+
+def strip_internal_input_item_metadata(item: TResponseInputItem) -> TResponseInputItem:
+    """Remove SDK-only session metadata before sending items back to the model."""
+    if not isinstance(item, dict):
+        return item
+
+    cleaned = dict(item)
+    cleaned.pop(TOOL_CALL_SESSION_DESCRIPTION_KEY, None)
+    cleaned.pop(TOOL_CALL_SESSION_TITLE_KEY, None)
+    return cast(TResponseInputItem, cleaned)
 
 
 def _should_omit_reasoning_item_ids(reasoning_item_id_policy: ReasoningItemIdPolicy | None) -> bool:
@@ -278,6 +308,7 @@ def function_rejection_item(
     *,
     rejection_message: str = REJECTION_MESSAGE,
     scope_id: str | None = None,
+    tool_origin: Any = None,
 ) -> ToolCallOutputItem:
     """Build a ToolCallOutputItem representing a rejected function tool call."""
     if isinstance(tool_call, ResponseFunctionToolCall):
@@ -286,6 +317,7 @@ def function_rejection_item(
         output=rejection_message,
         raw_item=ItemHelpers.tool_call_output_item(tool_call, rejection_message),
         agent=agent,
+        tool_origin=tool_origin,
     )
 
 
@@ -313,15 +345,19 @@ def apply_patch_rejection_item(
     agent: Any,
     call_id: str,
     *,
+    output_type: Literal["apply_patch_call_output", "custom_tool_call_output"] = (
+        "apply_patch_call_output"
+    ),
     rejection_message: str = REJECTION_MESSAGE,
 ) -> ToolCallOutputItem:
     """Build a ToolCallOutputItem representing a rejected apply_patch call."""
     rejection_raw_item: dict[str, Any] = {
-        "type": "apply_patch_call_output",
+        "type": output_type,
         "call_id": call_id,
-        "status": "failed",
         "output": rejection_message,
     }
+    if output_type == "apply_patch_call_output":
+        rejection_raw_item["status"] = "failed"
     return ToolCallOutputItem(
         agent=agent,
         output=rejection_message,
