@@ -5,9 +5,9 @@ import copy
 import functools
 import inspect
 import json
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Protocol, Union
+from typing import TYPE_CHECKING, Any, Protocol, Union
 
 import httpx
 from typing_extensions import NotRequired, TypedDict
@@ -27,12 +27,15 @@ from ..tool import (
     FunctionTool,
     Tool,
     ToolErrorFunction,
+    ToolOrigin,
+    ToolOriginType,
     ToolOutputImageDict,
     ToolOutputTextDict,
     _build_handled_function_tool_error_handler,
     _build_wrapped_function_tool,
     default_tool_error_function,
 )
+from ..tool_context import ToolContext
 from ..tracing import FunctionSpanData, get_current_span, mcp_tools_span
 from ..util._types import MaybeAwaitable
 
@@ -177,6 +180,28 @@ def create_static_tool_filter(
 class MCPUtil:
     """Set of utilities for interop between MCP and Agents SDK tools."""
 
+    @staticmethod
+    def _extract_static_meta(tool: Any) -> dict[str, Any] | None:
+        meta = getattr(tool, "meta", None)
+        if isinstance(meta, dict):
+            return copy.deepcopy(meta)
+
+        model_extra = getattr(tool, "model_extra", None)
+        if isinstance(model_extra, dict):
+            extra_meta = model_extra.get("meta")
+            if isinstance(extra_meta, dict):
+                return copy.deepcopy(extra_meta)
+
+        model_dump = getattr(tool, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                dumped_meta = dumped.get("meta")
+                if isinstance(dumped_meta, dict):
+                    return copy.deepcopy(dumped_meta)
+
+        return None
+
     @classmethod
     async def get_all_function_tools(
         cls,
@@ -251,7 +276,13 @@ class MCPUtil:
         policies. If the server uses a callable approval policy, approvals default
         to required to avoid bypassing dynamic checks.
         """
-        invoke_func_impl = functools.partial(cls.invoke_mcp_tool, server, tool)
+        static_meta = cls._extract_static_meta(tool)
+        invoke_func_impl = functools.partial(
+            cls.invoke_mcp_tool,
+            server,
+            tool,
+            meta=static_meta,
+        )
         effective_failure_error_function = server._get_failure_error_function(
             failure_error_function
         )
@@ -285,6 +316,10 @@ class MCPUtil:
             strict_json_schema=is_strict,
             needs_approval=needs_approval,
             mcp_title=resolve_mcp_tool_title(tool),
+            tool_origin=ToolOrigin(
+                type=ToolOriginType.MCP,
+                mcp_server_name=server.name,
+            ),
         )
         return function_tool
 
@@ -438,7 +473,10 @@ class MCPUtil:
         current_span = get_current_span()
         if current_span:
             if isinstance(current_span.span_data, FunctionSpanData):
-                current_span.span_data.output = tool_output
+                if not isinstance(context, ToolContext) or (
+                    context.run_config is None or context.run_config.trace_include_sensitive_data
+                ):
+                    current_span.span_data.output = tool_output
                 current_span.span_data.mcp_data = {
                     "server": server.name,
                 }

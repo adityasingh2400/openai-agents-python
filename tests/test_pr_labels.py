@@ -40,12 +40,36 @@ def test_infer_fallback_labels_marks_core_for_runtime_changes() -> None:
     assert labels == {"feature:core"}
 
 
-def test_infer_fallback_labels_marks_sessions_for_extensions_memory_changes() -> None:
+def test_infer_fallback_labels_marks_extensions_for_extensions_memory_changes() -> None:
     labels = pr_labels.infer_fallback_labels(
         ["src/agents/extensions/memory/advanced_sqlite_session.py"]
     )
 
-    assert labels == {"feature:sessions"}
+    assert labels == {"feature:extensions"}
+
+
+def test_infer_fallback_labels_marks_extensions_for_litellm_changes() -> None:
+    labels = pr_labels.infer_fallback_labels(["src/agents/extensions/models/litellm_model.py"])
+
+    assert labels == {"feature:extensions"}
+
+
+def test_infer_fallback_labels_marks_extensions_for_any_llm_changes() -> None:
+    labels = pr_labels.infer_fallback_labels(["src/agents/extensions/models/any_llm_model.py"])
+
+    assert labels == {"feature:extensions"}
+
+
+def test_infer_fallback_labels_marks_sandboxes_for_core_sandbox_changes() -> None:
+    labels = pr_labels.infer_fallback_labels(["src/agents/sandbox/runtime.py"])
+
+    assert labels == {"feature:sandboxes"}
+
+
+def test_infer_fallback_labels_marks_sandboxes_for_extension_sandbox_changes() -> None:
+    labels = pr_labels.infer_fallback_labels(["src/agents/extensions/sandbox/e2b/sandbox.py"])
+
+    assert labels == {"feature:extensions", "feature:sandboxes"}
 
 
 def test_compute_desired_labels_removes_stale_fallback_labels() -> None:
@@ -108,7 +132,7 @@ def test_compute_desired_labels_infers_bug_from_fix_title() -> None:
     assert desired == {"bug", "feature:core"}
 
 
-def test_compute_desired_labels_infers_sessions_for_extensions_memory_fix() -> None:
+def test_compute_desired_labels_infers_extensions_for_extensions_memory_fix() -> None:
     desired = pr_labels.compute_desired_labels(
         pr_context=pr_labels.PRContext(title="fix(memory): honor custom table names"),
         changed_files=[
@@ -123,7 +147,42 @@ def test_compute_desired_labels_infers_sessions_for_extensions_memory_fix() -> N
         head_sha=None,
     )
 
-    assert desired == {"bug", "feature:sessions"}
+    assert desired == {"bug", "feature:extensions"}
+
+
+def test_compute_desired_labels_infers_sandboxes_for_sandbox_fix() -> None:
+    desired = pr_labels.compute_desired_labels(
+        pr_context=pr_labels.PRContext(title="fix: restore sandbox cleanup behavior"),
+        changed_files=[
+            "src/agents/extensions/sandbox/e2b/sandbox.py",
+            "tests/extensions/sandbox/test_e2b_sandbox.py",
+        ],
+        diff_text="",
+        codex_ran=True,
+        codex_output_valid=True,
+        codex_labels=[],
+        base_sha=None,
+        head_sha=None,
+    )
+
+    assert desired == {"bug", "feature:extensions", "feature:sandboxes"}
+
+
+def test_compute_desired_labels_adds_extensions_for_extension_sandbox_when_codex_is_partial() -> (
+    None
+):
+    desired = pr_labels.compute_desired_labels(
+        pr_context=pr_labels.PRContext(),
+        changed_files=["src/agents/extensions/sandbox/e2b/sandbox.py"],
+        diff_text="",
+        codex_ran=True,
+        codex_output_valid=True,
+        codex_labels=["feature:sandboxes"],
+        base_sha=None,
+        head_sha=None,
+    )
+
+    assert desired == {"feature:extensions", "feature:sandboxes"}
 
 
 def test_compute_managed_labels_preserves_model_only_labels_without_signal() -> None:
