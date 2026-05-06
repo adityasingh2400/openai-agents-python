@@ -1765,7 +1765,16 @@ class TestGuardrailFunctionality:
         # Should have triggered guardrail and interrupted
         assert mock_model.interrupts_called == 1
         assert len(mock_model.sent_messages) == 1
+        assert "Your last answer was blocked by an output guardrail." in mock_model.sent_messages[0]
         assert "triggered_guardrail" in mock_model.sent_messages[0]
+        assert "test trigger" in mock_model.sent_messages[0]
+        assert "Please respond again following policy." in mock_model.sent_messages[0]
+        interrupt_event = next(
+            event
+            for event in mock_model.sent_events
+            if isinstance(event, RealtimeModelSendInterrupt)
+        )
+        assert interrupt_event.force_response_cancel is True
 
         # Should have emitted guardrail_tripped event
         events = []
@@ -1942,6 +1951,8 @@ class TestGuardrailFunctionality:
         assert len(mock_model.sent_messages) == 1
         message = mock_model.sent_messages[0]
         assert "guardrail_1" in message and "guardrail_2" in message
+        assert "Your last answer was blocked by an output guardrail." in message
+        assert "Please respond again following policy." in message
 
         # Should have emitted event with both guardrail results
         events = []
@@ -1971,6 +1982,7 @@ class TestGuardrailFunctionality:
 
         assert mock_model.interrupts_called == 1
         assert len(mock_model.sent_messages) == 1
+        assert "Your last answer was blocked by an output guardrail." in mock_model.sent_messages[0]
         assert "triggered_guardrail" in mock_model.sent_messages[0]
 
         events = []

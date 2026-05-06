@@ -13,6 +13,7 @@ from typing_extensions import assert_never
 from .._tool_identity import get_function_tool_lookup_key_for_tool
 from ..agent import Agent
 from ..exceptions import UserError
+from ..guardrail import OutputGuardrailResult
 from ..handoffs import Handoff
 from ..items import ToolApprovalItem
 from ..logger import logger
@@ -91,6 +92,32 @@ def _serialize_tool_output(output: Any) -> str:
         return json.dumps(output, ensure_ascii=False)
     except (TypeError, ValueError):
         return str(output)
+
+
+def _get_realtime_guardrail_feedback_message(
+    triggered_results: list[OutputGuardrailResult],
+) -> str:
+    guardrail_names = [result.guardrail.get_name() for result in triggered_results]
+    failure_details = [
+        {
+            "guardrail": result.guardrail.get_name(),
+            "output_info": result.output.output_info,
+        }
+        for result in triggered_results
+    ]
+    try:
+        failure_details_text = json.dumps(failure_details, default=str)
+    except (TypeError, ValueError):
+        failure_details_text = str(failure_details)
+
+    return (
+        "Your last answer was blocked by an output guardrail.\n"
+        f"Failed guardrail(s): {', '.join(guardrail_names)}.\n"
+        f"Failure details: {failure_details_text}.\n"
+        "Please respond again following policy. Apologize for not being able to answer "
+        "the question while avoiding the specific reason, then redirect the discussion "
+        "to an approved topic without inviting more discussion of the blocked content."
+    )
 
 
 class RealtimeSession(RealtimeModelListener):
@@ -955,11 +982,10 @@ class RealtimeSession(RealtimeModelListener):
             # Interrupt the model
             await self._model.send_event(RealtimeModelSendInterrupt(force_response_cancel=True))
 
-            # Send guardrail triggered message
-            guardrail_names = [result.guardrail.get_name() for result in triggered_results]
+            # Send feedback that asks the model to produce a safe replacement response.
             await self._model.send_event(
                 RealtimeModelSendUserInput(
-                    user_input=f"guardrail triggered: {', '.join(guardrail_names)}"
+                    user_input=_get_realtime_guardrail_feedback_message(triggered_results)
                 )
             )
 
