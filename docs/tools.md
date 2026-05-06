@@ -585,6 +585,8 @@ async def main():
 
 The `agent.as_tool` function is a convenience method to make it easy to turn an agent into a tool. It supports common runtime options such as `max_turns`, `run_config`, `hooks`, `previous_response_id`, `conversation_id`, `session`, and `needs_approval`. It also supports structured input with `parameters`, `input_builder`, and `include_input_schema`. For advanced orchestration (for example, conditional retries, fallback behavior, or chaining multiple agent calls), use `Runner.run` directly in your tool implementation:
 
+When an agent runs as a tool, the nested agent receives the input built for that tool call. It does not automatically receive the outer agent's full transcript. If a specialist agent needs broader conversation context, have the outer agent pass the relevant context in the tool arguments, use `input_builder` to construct the nested input, or call `Runner.run` directly inside a custom function tool.
+
 ```python
 @function_tool
 async def run_my_agent() -> str:
