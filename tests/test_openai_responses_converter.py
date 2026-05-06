@@ -437,6 +437,7 @@ def test_convert_tools_basic_types_and_includes():
     web_params = next(ct for ct in converted.tools if ct["type"] == "web_search")
     assert web_params.get("user_location") == web_tool.user_location
     assert web_params.get("search_context_size") == web_tool.search_context_size
+    assert "external_web_access" not in web_params
     # Verify computer tool uses the GA built-in tool payload.
     comp_params = next(ct for ct in converted.tools if ct["type"] == "computer")
     assert comp_params == {"type": "computer"}
@@ -448,6 +449,23 @@ def test_convert_tools_basic_types_and_includes():
     # Only one computer tool should be allowed.
     with pytest.raises(UserError):
         Converter.convert_tools(tools=[comp_tool, comp_tool], handoffs=[])
+
+
+def test_convert_tools_includes_explicit_false_external_web_access() -> None:
+    web_tool = WebSearchTool(external_web_access=False)
+
+    converted = Converter.convert_tools([web_tool], handoffs=[], model="gpt-5.4")
+
+    assert converted.includes == []
+    assert converted.tools == [
+        {
+            "type": "web_search",
+            "filters": None,
+            "user_location": None,
+            "search_context_size": "medium",
+            "external_web_access": False,
+        }
+    ]
 
 
 def test_convert_tools_uses_preview_computer_payload_for_preview_model() -> None:
@@ -1007,9 +1025,10 @@ def test_convert_tools_includes_handoffs():
     assert converted.includes == []
 
 
-def test_convert_tools_accepts_unresolved_computer_initializer():
+@pytest.mark.parametrize("model", ["gpt-5.4", "gpt-5.5"])
+def test_convert_tools_accepts_unresolved_computer_initializer(model: str):
     comp_tool = ComputerTool(computer=lambda **_: DummyComputer())
-    converted = Converter.convert_tools(tools=[comp_tool], handoffs=[], model="gpt-5.4")
+    converted = Converter.convert_tools(tools=[comp_tool], handoffs=[], model=model)
     assert converted.tools == [{"type": "computer"}]
 
 
@@ -1024,13 +1043,14 @@ def test_resolve_computer_tool_model_returns_none_when_request_model_is_omitted(
     assert resolved is None
 
 
-def test_convert_tools_preview_tool_choice_uses_ga_payload_for_ga_model() -> None:
+@pytest.mark.parametrize("model", ["gpt-5.4", "gpt-5.5"])
+def test_convert_tools_preview_tool_choice_uses_ga_payload_for_ga_model(model: str) -> None:
     comp_tool = ComputerTool(computer=lambda **_: DummyComputer())
 
     converted = Converter.convert_tools(
         tools=[comp_tool],
         handoffs=[],
-        model="gpt-5.4",
+        model=model,
         tool_choice="computer_use_preview",
     )
 

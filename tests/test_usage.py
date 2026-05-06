@@ -377,3 +377,313 @@ def test_usage_normalizes_chat_completions_types():
 
     assert isinstance(usage.output_tokens_details, OutputTokensDetails)
     assert usage.output_tokens_details.reasoning_tokens == 100
+
+
+# ============================================================================
+# Tests for agent_name on RequestUsage (issue #2100)
+# ============================================================================
+
+
+def test_request_usage_default_agent_name_is_none():
+    """Backward-compat: RequestUsage without agent_name defaults to None."""
+    entry = RequestUsage(
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+    assert entry.agent_name is None
+
+
+def test_serialize_deserialize_roundtrip_preserves_agent_name():
+    """JSON round-trip must preserve agent_name on each entry.
+
+    This guards against a regression where serialize_usage drops the new
+    attribution field, or deserialize_usage forgets to read it back.
+    Both branches of the conditional emit (entry-with-name and entry-without-name)
+    are exercised so the all-None fast path can't silently strip the keys.
+    """
+    from agents.usage import deserialize_usage, serialize_usage
+
+    named_entry = RequestUsage(
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        agent_name="Math Tutor",
+    )
+    unnamed_entry = RequestUsage(
+        input_tokens=2,
+        output_tokens=1,
+        total_tokens=3,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+    original = Usage(
+        requests=2,
+        input_tokens=12,
+        output_tokens=6,
+        total_tokens=18,
+        request_usage_entries=[named_entry, unnamed_entry],
+    )
+
+    restored = deserialize_usage(serialize_usage(original))
+
+    assert len(restored.request_usage_entries) == 2
+    restored_named = restored.request_usage_entries[0]
+    restored_unnamed = restored.request_usage_entries[1]
+
+    assert restored_named.agent_name == "Math Tutor"
+    assert restored_named.input_tokens == 10
+    assert restored_named.output_tokens == 5
+
+    assert restored_unnamed.agent_name is None
+    assert restored_unnamed.input_tokens == 2
+
+
+def test_request_usage_with_agent_name():
+    """RequestUsage can be created with an explicit agent_name."""
+    entry = RequestUsage(
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        agent_name="Math Tutor",
+    )
+    assert entry.agent_name == "Math Tutor"
+
+
+def test_usage_add_propagates_agent_name():
+    """Usage.add() with agent_name annotates the RequestUsage entry."""
+    parent = Usage()
+    child = Usage(
+        requests=1,
+        input_tokens=65,
+        output_tokens=13,
+        total_tokens=78,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+    parent.add(child, agent_name="Code Reviewer")
+
+    assert len(parent.request_usage_entries) == 1
+    entry = parent.request_usage_entries[0]
+    assert entry.agent_name == "Code Reviewer"
+    assert entry.input_tokens == 65
+    assert entry.output_tokens == 13
+
+
+def test_usage_add_without_agent_name_stays_none():
+    """Usage.add() without agent_name leaves it as None (backward compat)."""
+    parent = Usage()
+    child = Usage(
+        requests=1,
+        input_tokens=20,
+        output_tokens=10,
+        total_tokens=30,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+    parent.add(child)
+
+    assert len(parent.request_usage_entries) == 1
+    entry = parent.request_usage_entries[0]
+    assert entry.agent_name is None
+
+
+def test_usage_add_single_request_preserves_prebuilt_entry_attribution():
+    """Single-request Usage with request_usage_entries keeps agent name when add() has no kwargs."""
+    inner = RequestUsage(
+        input_tokens=20,
+        output_tokens=10,
+        total_tokens=30,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        agent_name="Prior Run Agent",
+    )
+    child = Usage(
+        requests=1,
+        input_tokens=20,
+        output_tokens=10,
+        total_tokens=30,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        request_usage_entries=[inner],
+    )
+    parent = Usage()
+    parent.add(child)
+
+    assert len(parent.request_usage_entries) == 1
+    out = parent.request_usage_entries[0]
+    assert out.agent_name == "Prior Run Agent"
+
+
+def test_usage_add_merge_existing_entries_applies_agent_name():
+    """When merging existing request_usage_entries, agent_name is applied to unset ones."""
+    # An existing entry without names
+    existing_entry = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+    parent = Usage()
+    child = Usage(
+        requests=2,  # not 1, so it won't auto-create a new entry
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        request_usage_entries=[existing_entry],
+    )
+    parent.add(child, agent_name="Triage Agent")
+
+    assert len(parent.request_usage_entries) == 1
+    assert parent.request_usage_entries[0].agent_name == "Triage Agent"
+
+
+def test_usage_add_merge_existing_entries_does_not_overwrite_agent_name():
+    """Existing agent_name on entries is not overwritten during merge."""
+    existing_entry = RequestUsage(
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        agent_name="Already Named Agent",
+    )
+    parent = Usage()
+    child = Usage(
+        requests=2,
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        request_usage_entries=[existing_entry],
+    )
+    parent.add(child, agent_name="New Agent Name")
+
+    # The existing name should NOT be overwritten
+    assert parent.request_usage_entries[0].agent_name == "Already Named Agent"
+
+
+@pytest.mark.asyncio
+async def test_runner_run_populates_agent_name_in_request_usage():
+    """Integration: Running an agent populates agent_name in RequestUsage entries."""
+    from agents.usage import Usage as AgentUsage
+
+    model_usage = AgentUsage(
+        requests=1,
+        input_tokens=42,
+        output_tokens=8,
+        total_tokens=50,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+    fake = FakeModel(initial_output=[get_text_message("hello")])
+    fake.set_hardcoded_usage(model_usage)
+    agent = Agent(name="My Assistant", model=fake)
+
+    result = await Runner.run(agent, input="hi")
+
+    entries = result.context_wrapper.usage.request_usage_entries
+    assert len(entries) == 1
+    assert entries[0].agent_name == "My Assistant"
+
+
+@pytest.mark.asyncio
+async def test_multi_agent_run_attributes_usage_to_correct_agents():
+    """Multi-agent scenario: each RequestUsage entry has the right agent_name."""
+
+    from agents.usage import Usage as AgentUsage
+    from tests.test_responses import get_handoff_tool_call
+
+    # Two separate models so we can track which agent's usage is which
+    triage_usage = AgentUsage(
+        requests=1,
+        input_tokens=100,
+        output_tokens=10,
+        total_tokens=110,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+    specialist_usage = AgentUsage(
+        requests=1,
+        input_tokens=200,
+        output_tokens=20,
+        total_tokens=220,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+    )
+
+    specialist_model = FakeModel(initial_output=[get_text_message("specialist done")])
+    specialist_model.set_hardcoded_usage(specialist_usage)
+    specialist_agent = Agent(name="Specialist Agent", model=specialist_model)
+
+    triage_model = FakeModel()
+    triage_model.add_multiple_turn_outputs(
+        [
+            [get_handoff_tool_call(specialist_agent)],
+        ]
+    )
+    triage_model.set_hardcoded_usage(triage_usage)
+    triage_agent = Agent(name="Triage Agent", model=triage_model, handoffs=[specialist_agent])
+
+    result = await Runner.run(triage_agent, input="route me")
+
+    all_entries = result.context_wrapper.usage.request_usage_entries
+    assert len(all_entries) == 2, f"Expected 2 request entries, got {len(all_entries)}"
+
+    agent_names = [e.agent_name for e in all_entries]
+    assert "Triage Agent" in agent_names, f"Expected 'Triage Agent' in {agent_names}"
+    assert "Specialist Agent" in agent_names, f"Expected 'Specialist Agent' in {agent_names}"
+
+    triage_entry = next(e for e in all_entries if e.agent_name == "Triage Agent")
+    assert triage_entry.input_tokens == 100
+
+    specialist_entry = next(e for e in all_entries if e.agent_name == "Specialist Agent")
+    assert specialist_entry.input_tokens == 200
+
+
+def test_add_does_not_mutate_other_entries() -> None:
+    """Adding a Usage with existing request_usage_entries must not mutate the original entries.
+
+    Previously, the elif branch in Usage.add() called entry.agent_name = ... directly on
+    the objects inside other.request_usage_entries, causing silent mis-attribution when the
+    same Usage object was re-used or added to multiple aggregators.
+    """
+    from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
+
+    source_entry = RequestUsage(
+        input_tokens=50,
+        output_tokens=25,
+        total_tokens=75,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        agent_name=None,
+    )
+
+    # Build a Usage that already has request_usage_entries (requests != 1 path)
+    other = Usage(
+        requests=2,
+        input_tokens=50,
+        output_tokens=25,
+        total_tokens=75,
+        request_usage_entries=[source_entry],
+    )
+
+    agg = Usage()
+    agg.add(other, agent_name="MyAgent")
+
+    # The aggregator should have a copy with the annotation applied
+    assert len(agg.request_usage_entries) == 1
+    assert agg.request_usage_entries[0].agent_name == "MyAgent"
+
+    # The original entry must NOT be mutated
+    assert source_entry.agent_name is None, "Original entry was mutated!"
