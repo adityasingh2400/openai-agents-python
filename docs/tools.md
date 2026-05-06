@@ -540,6 +540,18 @@ def get_user_profile(user_id: str) -> str:
 
 If you are manually creating a `FunctionTool` object, then you must handle errors inside the `on_invoke_tool` function.
 
+### Long-running tool progress
+
+Function tools return one final output to the agent. They do not currently yield custom intermediate tool-progress events into `Runner.run_streamed()` while the tool body is still running.
+
+For user-visible progress from longer operations, use one of these patterns:
+
+-   If the work is another agent run, expose it with `Agent.as_tool(..., on_stream=...)` so your app can observe the nested agent's stream events while the tool still returns a final output.
+-   If the work is deterministic application code, publish progress through your own queue, database row, websocket, SSE channel, or task system while the tool runs, then return the final result to the agent.
+-   If the work must survive process restarts or last a long time, use a durable workflow integration such as Temporal or DBOS and surface progress from that system.
+
+For the nested-agent streaming pattern, see [Streaming nested agent runs](#streaming-nested-agent-runs).
+
 ## Agents as tools
 
 In some workflows, you may want a central agent to orchestrate a network of specialized agents, instead of handing off control. You can do this by modeling agents as tools.
