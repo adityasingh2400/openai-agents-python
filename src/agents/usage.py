@@ -84,6 +84,7 @@ class RequestUsage:
     token usage and costs to specific agents in multi-agent workflows.
     """
 
+
 def _normalize_input_tokens_details(
     v: InputTokensDetails | PromptTokensDetails | None,
 ) -> InputTokensDetails:
