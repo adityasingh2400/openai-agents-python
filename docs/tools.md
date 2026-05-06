@@ -456,6 +456,54 @@ def score_b(score: Annotated[int, Field(..., ge=0, le=100, description="Score fr
     return f"Score recorded: {score}"
 ```
 
+### Function tool guardrails
+
+For local function tools, tool input guardrails are the pre-execution validation hook. They run after the model emits a concrete tool call and before the Python function is invoked, so they can inspect the exact serialized arguments, current tool context, and calling agent.
+
+Use them for application-specific policy checks such as payload allowlists, tenant or caller validation, freshness windows, nonce checks, and blocking sensitive values. Return `allow()` to continue, `reject_content(...)` to skip the tool and send a model-visible rejection message, or `raise_exception(...)` to halt the run with a [`ToolInputGuardrailTripwireTriggered`][agents.exceptions.ToolInputGuardrailTripwireTriggered].
+
+```python
+import json
+
+from agents import (
+    Agent,
+    Runner,
+    ToolGuardrailFunctionOutput,
+    ToolInputGuardrailData,
+    function_tool,
+    tool_input_guardrail,
+)
+
+
+@tool_input_guardrail
+def validate_transfer(data: ToolInputGuardrailData) -> ToolGuardrailFunctionOutput:
+    args = json.loads(data.context.tool_arguments)
+
+    if args.get("currency") != "USD":
+        return ToolGuardrailFunctionOutput.reject_content(
+            message="Transfers are only allowed in USD.",
+            output_info={"reason": "unsupported_currency"},
+        )
+
+    if args.get("amount", 0) > 1000:
+        return ToolGuardrailFunctionOutput.raise_exception(
+            output_info={"reason": "amount_limit_exceeded"},
+        )
+
+    return ToolGuardrailFunctionOutput.allow()
+
+
+@function_tool(tool_input_guardrails=[validate_transfer])
+def transfer_funds(recipient_id: str, amount: float, currency: str) -> str:
+    return f"Transferred {amount} {currency} to {recipient_id}"
+
+
+agent = Agent(name="Payments", tools=[transfer_funds])
+result = await Runner.run(agent, "Send 25 USD to recipient acct_123")
+```
+
+Hosted tools, such as web search, file search, and hosted MCP, execute on OpenAI servers rather than inside the SDK process. Python-side tool input guardrails can protect local function tools, but they cannot intercept server-side hosted tool execution.
+
 ### Function tool timeouts
 
 You can set per-call timeouts for async function tools with `@function_tool(timeout=...)`.
