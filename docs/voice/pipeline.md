@@ -73,3 +73,9 @@ async for event in result.stream():
 ### Interruptions
 
 The Agents SDK currently does not provide any built-in interruption handling for [`StreamedAudioInput`][agents.voice.input.StreamedAudioInput]. Instead for every detected turn it will trigger a separate run of your workflow. If you want to handle interruptions inside your application you can listen to the [`VoiceStreamEventLifecycle`][agents.voice.events.VoiceStreamEventLifecycle] events. `turn_started` will indicate that a new turn was transcribed and processing is beginning. `turn_ended` will trigger after all the audio was dispatched for a respective turn. You could use these events to mute the microphone of the speaker when the model starts a turn and unmute it after you flushed all the related audio for a turn.
+
+### Silence and missing turns
+
+For streamed audio, the pipeline only runs the workflow after the speech-to-text session emits a transcribed turn. If the upstream audio capture or activity detection never produces a turn, the SDK does not automatically synthesize a fallback response.
+
+Apps that need "please repeat that" behavior should track silence in the microphone/input layer that feeds [`StreamedAudioInput.add_audio()`][agents.voice.input.StreamedAudioInput.add_audio]. For example, start an application timer when you stop receiving meaningful microphone energy or when no `turn_started` lifecycle event arrives after user speech, then play your own prompt or inject a new user action according to your product's UX. Keep this logic outside the workflow, because [`VoiceWorkflowBase.run()`][agents.voice.workflow.VoiceWorkflowBase.run] is only called after a transcription is available.
