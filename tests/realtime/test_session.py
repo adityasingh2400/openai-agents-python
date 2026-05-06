@@ -1030,6 +1030,60 @@ class TestToolCallExecution:
         assert tool_end_event.arguments == '{"param": "value"}'
 
     @pytest.mark.asyncio
+    async def test_multiple_json_tool_outputs_each_request_follow_up_response(
+        self, mock_model, mock_agent
+    ):
+        """Chained realtime tool calls should each be able to trigger the next voice response."""
+
+        async def invoke_search_tool(_ctx: ToolContext[Any], _arguments: str) -> dict[str, Any]:
+            await asyncio.sleep(0)
+            return {"film_id": "film_123"}
+
+        async def invoke_times_tool(_ctx: ToolContext[Any], _arguments: str) -> dict[str, Any]:
+            await asyncio.sleep(0)
+            return {"times": ["18:30", "20:45"]}
+
+        search_tool = FunctionTool(
+            name="search_film",
+            description="Search for a film.",
+            params_json_schema={"type": "object", "properties": {}},
+            on_invoke_tool=invoke_search_tool,
+        )
+        times_tool = FunctionTool(
+            name="get_showtimes",
+            description="Get showtimes for a film.",
+            params_json_schema={"type": "object", "properties": {}},
+            on_invoke_tool=invoke_times_tool,
+        )
+        mock_agent.get_all_tools.return_value = [search_tool, times_tool]
+
+        session = RealtimeSession(mock_model, mock_agent, None)
+        await asyncio.gather(
+            session._handle_tool_call(
+                RealtimeModelToolCallEvent(
+                    name="search_film",
+                    call_id="call_search",
+                    arguments='{"title": "Example"}',
+                )
+            ),
+            session._handle_tool_call(
+                RealtimeModelToolCallEvent(
+                    name="get_showtimes",
+                    call_id="call_times",
+                    arguments='{"film_id": "film_123"}',
+                )
+            ),
+        )
+
+        assert len(mock_model.sent_tool_outputs) == 2
+        outputs_by_call_id = {
+            sent_call.call_id: (sent_output, start_response)
+            for sent_call, sent_output, start_response in mock_model.sent_tool_outputs
+        }
+        assert outputs_by_call_id["call_search"] == ('{"film_id": "film_123"}', True)
+        assert outputs_by_call_id["call_times"] == ('{"times": ["18:30", "20:45"]}', True)
+
+    @pytest.mark.asyncio
     async def test_function_tool_timeout_returns_result_message(self, mock_model, mock_agent):
         async def invoke_slow_tool(_ctx: ToolContext[Any], _arguments: str) -> str:
             await asyncio.sleep(0.2)
