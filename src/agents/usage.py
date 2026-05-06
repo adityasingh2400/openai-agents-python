@@ -44,7 +44,6 @@ def deserialize_usage(usage_data: Mapping[str, Any]) -> Usage:
                     OutputTokensDetails(reasoning_tokens=0),
                 ),
                 agent_name=entry.get("agent_name", None),
-                model_name=entry.get("model_name", None),
             )
         )
 
@@ -84,14 +83,6 @@ class RequestUsage:
     Populated automatically when an agent makes a model call so that callers can attribute
     token usage and costs to specific agents in multi-agent workflows.
     """
-
-    model_name: str | None = None
-    """Name of the model used for this request, if available.
-
-    Populated automatically when an agent makes a model call so that callers can attribute
-    token usage and costs to specific models.
-    """
-
 
 def _normalize_input_tokens_details(
     v: InputTokensDetails | PromptTokensDetails | None,
@@ -175,7 +166,6 @@ class Usage:
         other: Usage,
         *,
         agent_name: str | None = None,
-        model_name: str | None = None,
     ) -> None:
         """Add another Usage object to this one, aggregating all fields.
 
@@ -185,8 +175,6 @@ class Usage:
             other: The Usage object to add to this one.
             agent_name: Optional name of the agent making this request, used to annotate the
                 resulting ``RequestUsage`` entry for per-agent cost attribution.
-            model_name: Optional name of the model used for this request, used to annotate the
-                resulting ``RequestUsage`` entry for per-model cost attribution.
         """
         self.requests += other.requests if other.requests else 0
         self.input_tokens += other.input_tokens if other.input_tokens else 0
@@ -239,9 +227,6 @@ class Usage:
                         agent_name=agent_name
                         if (agent_name is not None and entry.agent_name is None)
                         else entry.agent_name,
-                        model_name=model_name
-                        if (model_name is not None and entry.model_name is None)
-                        else entry.model_name,
                     )
                     self.request_usage_entries.append(annotated_entry)
             else:
@@ -256,12 +241,11 @@ class Usage:
                     input_tokens_details=input_details,
                     output_tokens_details=output_details,
                     agent_name=agent_name,
-                    model_name=model_name,
                 )
                 self.request_usage_entries.append(request_usage)
         elif other.request_usage_entries:
             # If the other Usage already has individual request breakdowns, merge them.
-            # Apply agent_name/model_name to entries that don't already have them set,
+            # Apply agent_name to entries that don't already have it set,
             # but copy each entry rather than mutating the original objects in place
             # to avoid silent mis-attribution when the same Usage is added multiple times.
             for entry in other.request_usage_entries:
@@ -274,9 +258,6 @@ class Usage:
                     agent_name=agent_name
                     if (agent_name is not None and entry.agent_name is None)
                     else entry.agent_name,
-                    model_name=model_name
-                    if (model_name is not None and entry.model_name is None)
-                    else entry.model_name,
                 )
                 self.request_usage_entries.append(annotated_entry)
 
@@ -309,8 +290,6 @@ def serialize_usage(usage: Usage) -> dict[str, Any]:
         }
         if entry.agent_name is not None:
             result["agent_name"] = entry.agent_name
-        if entry.model_name is not None:
-            result["model_name"] = entry.model_name
         return result
 
     return {
