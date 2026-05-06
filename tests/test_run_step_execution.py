@@ -29,6 +29,7 @@ from agents import (
     ModelBehaviorError,
     ModelRefusalError,
     ModelResponse,
+    ModelSettings,
     RunConfig,
     RunContextWrapper,
     RunHooks,
@@ -230,6 +231,44 @@ async def test_plaintext_agent_with_tool_call_is_run_again():
     assert_item_is_function_tool_call_output(items[2], "123")
 
     assert isinstance(result.next_step, NextStepRunAgain)
+
+
+@pytest.mark.asyncio
+async def test_max_parallel_tool_calls_limits_function_tool_concurrency():
+    active_count = 0
+    max_seen_count = 0
+
+    async def tracked_tool() -> str:
+        nonlocal active_count, max_seen_count
+        active_count += 1
+        max_seen_count = max(max_seen_count, active_count)
+        await asyncio.sleep(0.01)
+        active_count -= 1
+        return "ok"
+
+    tool = function_tool(tracked_tool, name_override="tracked_tool")
+    agent = Agent(
+        name="test",
+        tools=[tool],
+        model_settings=ModelSettings(max_parallel_tool_calls=2),
+    )
+    response = ModelResponse(
+        output=[
+            get_function_tool_call("tracked_tool", "{}", call_id="call_1"),
+            get_function_tool_call("tracked_tool", "{}", call_id="call_2"),
+            get_function_tool_call("tracked_tool", "{}", call_id="call_3"),
+        ],
+        usage=Usage(),
+        response_id="resp",
+    )
+
+    result = await get_execute_result(agent, response)
+
+    assert active_count == 0
+    assert max_seen_count == 2
+    assert (
+        len([item for item in result.generated_items if isinstance(item, ToolCallOutputItem)]) == 3
+    )
 
 
 @pytest.mark.asyncio

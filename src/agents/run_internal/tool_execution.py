@@ -1358,6 +1358,7 @@ class _FunctionToolBatchExecutor:
         hooks: RunHooks[Any],
         context_wrapper: RunContextWrapper[Any],
         config: RunConfig,
+        max_parallel_tool_calls: int | None,
         isolate_parallel_failures: bool | None,
     ) -> None:
         self.execution_agent = bindings.execution_agent
@@ -1366,6 +1367,7 @@ class _FunctionToolBatchExecutor:
         self.hooks = hooks
         self.context_wrapper = context_wrapper
         self.config = config
+        self.max_parallel_tool_calls = max_parallel_tool_calls
         self.isolate_parallel_failures = (
             len(tool_runs) > 1 if isolate_parallel_failures is None else isolate_parallel_failures
         )
@@ -1406,11 +1408,11 @@ class _FunctionToolBatchExecutor:
             if function_tool_id not in enabled_function_tool_ids:
                 self.available_function_tools.append(tool_run.function_tool)
                 enabled_function_tool_ids.add(function_tool_id)
-        for order, tool_run in enumerate(self.tool_runs):
-            self._create_tool_task(tool_run, order)
+        pending_tool_runs = list(enumerate(self.tool_runs))
+        self._fill_tool_task_slots(pending_tool_runs)
 
         try:
-            await self._drain_pending_tasks()
+            await self._drain_pending_tasks(pending_tool_runs)
         except asyncio.CancelledError as exc:
             if self.propagating_failure is exc:
                 raise
@@ -1422,6 +1424,18 @@ class _FunctionToolBatchExecutor:
             self.tool_input_guardrail_results,
             self.tool_output_guardrail_results,
         )
+
+    def _fill_tool_task_slots(self, pending_tool_runs: list[tuple[int, ToolRunFunction]]) -> None:
+        max_parallel_tool_calls = self.max_parallel_tool_calls
+        available_slots = (
+            len(pending_tool_runs)
+            if max_parallel_tool_calls is None
+            else max_parallel_tool_calls - len(self.pending_tasks)
+        )
+        while available_slots > 0 and pending_tool_runs:
+            order, tool_run = pending_tool_runs.pop(0)
+            self._create_tool_task(tool_run, order)
+            available_slots -= 1
 
     def _create_tool_task(self, tool_run: ToolRunFunction, order: int) -> None:
         task_state = _FunctionToolTaskState(tool_run=tool_run, order=order)
@@ -1435,7 +1449,10 @@ class _FunctionToolBatchExecutor:
         self.task_states[task] = task_state
         self.pending_tasks.add(task)
 
-    async def _drain_pending_tasks(self) -> None:
+    async def _drain_pending_tasks(
+        self,
+        pending_tool_runs: list[tuple[int, ToolRunFunction]],
+    ) -> None:
         while self.pending_tasks:
             done_tasks, self.pending_tasks = await asyncio.wait(
                 self.pending_tasks,
@@ -1448,6 +1465,7 @@ class _FunctionToolBatchExecutor:
             )
             if failure is not None:
                 await self._raise_failure_after_draining_siblings(failure)
+            self._fill_tool_task_slots(pending_tool_runs)
 
     async def _raise_failure_after_draining_siblings(
         self,
@@ -1899,17 +1917,22 @@ async def execute_function_tool_calls(
     hooks: RunHooks[Any],
     context_wrapper: RunContextWrapper[Any],
     config: RunConfig,
+    max_parallel_tool_calls: int | None = None,
     isolate_parallel_failures: bool | None = None,
 ) -> tuple[
     list[FunctionToolResult], list[ToolInputGuardrailResult], list[ToolOutputGuardrailResult]
 ]:
     """Execute function tool calls with approvals, guardrails, and hooks."""
+    if max_parallel_tool_calls is not None and max_parallel_tool_calls < 1:
+        raise UserError("max_parallel_tool_calls must be at least 1")
+
     return await _FunctionToolBatchExecutor(
         bindings=bindings,
         tool_runs=tool_runs,
         hooks=hooks,
         context_wrapper=context_wrapper,
         config=config,
+        max_parallel_tool_calls=max_parallel_tool_calls,
         isolate_parallel_failures=isolate_parallel_failures,
     ).execute()
 
@@ -2245,6 +2268,9 @@ async def execute_approved_tools(
             hooks=hooks,
             context_wrapper=context_wrapper,
             config=run_config,
+            max_parallel_tool_calls=agent.model_settings.resolve(
+                run_config.model_settings
+            ).max_parallel_tool_calls,
         )
         for result in function_results:
             if isinstance(result.run_item, RunItemBase):

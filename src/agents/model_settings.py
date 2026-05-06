@@ -170,6 +170,14 @@ class ModelSettings:
     to enable server-side compaction when the rendered context crosses a token threshold.
     """
 
+    max_parallel_tool_calls: int | None = None
+    """Maximum number of local function tool calls to execute concurrently.
+
+    Set to ``None`` to preserve the current behavior, which allows all function tool calls
+    from a turn to run in parallel. This is enforced by the SDK and does not change the
+    model provider's ``parallel_tool_calls`` setting.
+    """
+
     def resolve(self, override: ModelSettings | None) -> ModelSettings:
         """Produce a new ModelSettings by overlaying any non-None values from the
         override on top of this instance."""

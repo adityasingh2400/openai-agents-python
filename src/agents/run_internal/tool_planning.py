@@ -558,6 +558,9 @@ async def _execute_tool_plan(
 ]:
     """Execute tool runs captured in a ToolExecutionPlan."""
     public_agent = bindings.public_agent
+    max_parallel_tool_calls = bindings.execution_agent.model_settings.resolve(
+        run_config.model_settings
+    ).max_parallel_tool_calls
     isolate_function_tool_failures = len(plan.function_runs) > 1 or (
         parallel
         and (
@@ -583,6 +586,7 @@ async def _execute_tool_plan(
                 hooks=hooks,
                 context_wrapper=context_wrapper,
                 config=run_config,
+                max_parallel_tool_calls=max_parallel_tool_calls,
                 isolate_parallel_failures=isolate_function_tool_failures,
             ),
             execute_computer_actions(
@@ -632,6 +636,7 @@ async def _execute_tool_plan(
             hooks=hooks,
             context_wrapper=context_wrapper,
             config=run_config,
+            max_parallel_tool_calls=max_parallel_tool_calls,
             isolate_parallel_failures=isolate_function_tool_failures,
         )
         computer_results = await execute_computer_actions(

@@ -76,6 +76,7 @@ def test_all_fields_serialization() -> None:
             ),
         ),
         context_management=[{"type": "compaction", "compact_threshold": 200000}],
+        max_parallel_tool_calls=2,
     )
 
     # Verify that every single field is set to a non-None value
