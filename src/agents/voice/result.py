@@ -220,6 +220,12 @@ class StreamedAudioResult:
                 )
             )
             self._text_buffer = ""
+        elif self._started_processing_turn:
+            # Turn was started (turn_started emitted) but produced no synthesizable text.
+            # Emit turn_ended directly so consumers see balanced lifecycle events.
+            local_queue = asyncio.Queue()
+            await local_queue.put(VoiceStreamEventLifecycle(event="turn_ended"))
+            self._ordered_tasks.append(local_queue)
         self._done_processing = True
         if self._dispatcher_task is None:
             self._dispatcher_task = asyncio.create_task(self._dispatch_audio())
