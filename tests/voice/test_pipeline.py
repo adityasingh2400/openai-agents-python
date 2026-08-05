@@ -1119,3 +1119,43 @@ async def test_voice_workflow_errors_apply_model_and_tool_logging_policies(
             assert error in record.args
             assert record.exc_info is not None
             assert record.exc_info[1] is error
+
+
+class _GreetingWorkflow(FakeWorkflow):
+    async def on_start(self):
+        yield "Hello there."
+
+
+class _RecordingTTS(FakeTTS):
+    def __init__(self) -> None:
+        super().__init__()
+        self.texts: list[str] = []
+
+    async def run(self, text: str, settings: TTSModelSettings) -> AsyncGenerator[bytes, None]:
+        self.texts.append(text)
+        async for chunk in super().run(text, settings):
+            yield chunk
+
+
+@pytest.mark.asyncio
+async def test_voicepipeline_on_start_intro_is_its_own_turn() -> None:
+    """`on_start` output is synthesized before the first user turn, not merged into it."""
+    fake_stt = FakeSTT(["first"])
+    fake_tts = _RecordingTTS()
+    workflow = _GreetingWorkflow([["out_1"]])
+    pipeline = VoicePipeline(workflow=workflow, stt_model=fake_stt, tts_model=fake_tts)
+
+    streamed_audio_input = await FakeStreamedAudioInput.get(count=1)
+    result = await pipeline.run(streamed_audio_input)
+
+    events, _ = await asyncio.wait_for(extract_events(result), timeout=1)
+    assert events == [
+        "turn_started",
+        "audio",
+        "turn_ended",
+        "turn_started",
+        "audio",
+        "turn_ended",
+        "session_ended",
+    ]
+    assert fake_tts.texts == ["Hello there.", "out_1"]

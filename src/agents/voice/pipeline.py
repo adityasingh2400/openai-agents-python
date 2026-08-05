@@ -135,13 +135,19 @@ class VoicePipeline:
             ):
                 transcription_session = None
                 try:
+                    intro_started = False
                     try:
                         async for intro_text in self.workflow.on_start():
+                            intro_started = True
                             await output._add_text(intro_text)
                     except Exception as e:
                         log_model_and_tool_action_warning(
                             logger, "Voice workflow on_start failed", e
                         )
+                    if intro_started:
+                        # Close the intro turn so its trailing text is synthesized before the
+                        # first user turn instead of being merged into the first agent response.
+                        await output._turn_done()
 
                     transcription_session = await self._get_stt_model().create_session(
                         audio_input,
