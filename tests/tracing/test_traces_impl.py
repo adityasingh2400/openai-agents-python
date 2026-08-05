@@ -101,6 +101,25 @@ def test_trace_impl_double_start_and_finish_without_start(caplog) -> None:
     fresh.finish(reset_current=True)  # should not raise when never started
 
 
+def test_trace_impl_finish_reports_the_end_once() -> None:
+    Scope.set_current_trace(None)
+    processor = DummyProcessor()
+    trace = TraceImpl(
+        name="finish-twice",
+        trace_id="trace-finish-twice",
+        group_id=None,
+        metadata=None,
+        processor=processor,
+    )
+
+    with trace:
+        # Ending the trace early must not make the context manager report it again.
+        trace.finish()
+
+    assert processor.ended == ["trace-finish-twice"]
+    assert Scope.get_current_trace() is None
+
+
 def test_reattached_trace_restores_scope_without_reemitting_processor_events() -> None:
     Scope.set_current_trace(None)
     processor = DummyProcessor()
