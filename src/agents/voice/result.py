@@ -258,6 +258,12 @@ class StreamedAudioResult:
 
     async def _done(self):
         self._completed_session = True
+        if self._dispatcher_task is None:
+            # No audio segment was ever queued, so the dispatcher that normally emits the
+            # terminal event never started. Emit it here so consumers of `stream()` are not
+            # left waiting forever.
+            await self._queue.put(VoiceStreamEventLifecycle(event="session_ended"))
+            return
         self._dispatcher_event.set()
         await self._wait_for_completion()
 

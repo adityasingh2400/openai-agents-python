@@ -1119,3 +1119,17 @@ async def test_voice_workflow_errors_apply_model_and_tool_logging_policies(
             assert error in record.args
             assert record.exc_info is not None
             assert record.exc_info[1] is error
+
+
+@pytest.mark.asyncio
+async def test_voicepipeline_multi_turn_without_transcripts_emits_session_ended() -> None:
+    """A streamed session that never produces a transcript still terminates the result stream."""
+    fake_stt = FakeSTT([])
+    fake_tts = FakeTTS()
+    pipeline = VoicePipeline(workflow=FakeWorkflow([]), stt_model=fake_stt, tts_model=fake_tts)
+
+    streamed_audio_input = await FakeStreamedAudioInput.get(count=1)
+    result = await pipeline.run(streamed_audio_input)
+
+    events, _ = await asyncio.wait_for(extract_events(result), timeout=1)
+    assert events == ["session_ended"]
